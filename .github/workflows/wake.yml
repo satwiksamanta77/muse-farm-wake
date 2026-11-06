@@ -1,0 +1,55 @@
+name: farm-wake
+
+# Hits the farm's public status URL every 5 minutes.
+# A public-port request counts as machine activity on instabox, so this
+#   - stops the free box from idle-pausing (30 min idle rule), and
+#   - wakes it after a max-run cooldown (5-20 min, then 60-75, then 120-135).
+# Nothing secret lives here: the URL only answers health + progress + CSV.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: farm-wake
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: wake and keep alive
+        env:
+          FARM_URL: https://8080-agq3gln5xvtbbzgokmkcifvo5e.instabox.tech
+        run: |
+          set -u
+          for i in 1 2 3; do
+            if curl -fsS --max-time 40 "$FARM_URL/health"; then
+              echo "awake"
+              exit 0
+            fi
+            echo "attempt $i failed (cooldown or cold start), retrying"
+            sleep 30
+          done
+          echo "still asleep; next run will try again"
+          exit 0
+
+      - uses: actions/checkout@v4
+
+      - name: heartbeat
+        run: |
+          # hourly commit keeps GitHub from disabling this scheduled workflow
+          # after 60 days without repository activity
+          if [ "$(date -u +%M)" -lt 10 ]; then
+            date -u > .heartbeat
+            git config user.name "farm-bot"
+            git config user.email "farm-bot@users.noreply.github.com"
+            git add .heartbeat
+            git commit -m "heartbeat $(date -u +%Y-%m-%dT%H)" || exit 0
+            git push
+          fi
